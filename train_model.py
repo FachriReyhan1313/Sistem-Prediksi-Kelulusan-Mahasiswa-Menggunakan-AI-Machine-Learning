@@ -1,5 +1,3 @@
-# train_model_80_10_10_sigmoid.py
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -13,21 +11,40 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    classification_report,
+    confusion_matrix
+)
 
+# ======================================================
+# GLOBAL CONFIG
+# ======================================================
 RANDOM_STATE = 42
 
 DATA_PATH = "dataset_kelulusan_mahasiswa.csv"
 OUTPUT_MODEL = "model_kelulusan.joblib"
 SUMMARY_JSON = "train_summary_80_10_10_sigmoid.json"
 
-FEATURES = ["ipk", "sks_lulus", "presensi", "mengulang"]
+# ⚠️ HARUS SAMA DENGAN DATASET & PREDICTION_SERVICE
+FEATURES = [
+    "ipk",
+    "sks_lulus",
+    "presensi",
+    "mengulang",
+    "semester_aktif",
+    "status_skripsi",
+    "status_administrasi",
+    "bekerja",
+    "cuti"
+]
+
 TARGET = "lulus_tepat_waktu"
 
-
-# -----------------------
-# Utilities
-# -----------------------
+# ======================================================
+# DATA UTILITIES
+# ======================================================
 def load_data(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"Dataset not found: {path}")
@@ -47,17 +64,25 @@ def prepare_features(df):
 
     return X, y
 
-
+# ======================================================
+# PIPELINE — RANDOM FOREST
+# ======================================================
 def build_pipeline():
     return Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("clf", RandomForestClassifier(
+            n_estimators=300,
+            max_depth=10,
+            min_samples_leaf=5,
+            class_weight="balanced",
             random_state=RANDOM_STATE,
             n_jobs=-1
         ))
     ])
 
-
+# ======================================================
+# EVALUATION
+# ======================================================
 def evaluate(model, X, y, label):
     y_pred = model.predict(X)
     y_prob = model.predict_proba(X)[:, 1]
@@ -72,18 +97,22 @@ def evaluate(model, X, y, label):
 
     return {"accuracy": acc, "roc_auc": auc}
 
-
-# -----------------------
-# Main
-# -----------------------
+# ======================================================
+# MAIN TRAINING FLOW
+# ======================================================
 def main():
     print("Loading dataset...")
     df = load_data(DATA_PATH)
     X, y = prepare_features(df)
 
-    # 80 / 10 / 10 split
+    # -----------------------
+    # SPLIT 80 / 10 / 10
+    # -----------------------
     X_tmp, X_test, y_tmp, y_test = train_test_split(
-        X, y, test_size=0.10, stratify=y, random_state=RANDOM_STATE
+        X, y,
+        test_size=0.10,
+        stratify=y,
+        random_state=RANDOM_STATE
     )
 
     X_train, X_val, y_train, y_val = train_test_split(
@@ -97,19 +126,20 @@ def main():
 
     pipe = build_pipeline()
 
-    print("\nTraining + Hyperparameter Search...")
+    # -----------------------
+    # HYPERPARAM SEARCH (AMAN)
+    # -----------------------
     param_dist = {
-        "clf__n_estimators": [100, 200, 400],
-        "clf__max_depth": [5, 8, None],
-        "clf__min_samples_split": [2, 4, 6],
-        "clf__min_samples_leaf": [1, 2, 3],
-        "clf__class_weight": [None, "balanced"]
+        "clf__n_estimators": [200, 300, 400],
+        "clf__max_depth": [8, 10, 12],
+        "clf__min_samples_leaf": [3, 5, 8]
     }
 
+    print("\nTraining + Hyperparameter Search...")
     rs = RandomizedSearchCV(
         pipe,
-        param_dist,
-        n_iter=20,
+        param_distributions=param_dist,
+        n_iter=10,
         scoring="roc_auc",
         cv=4,
         random_state=RANDOM_STATE,
@@ -122,13 +152,16 @@ def main():
 
     print("Best params:", rs.best_params_)
 
+    # -----------------------
+    # VALIDATION (UNCALIBRATED)
+    # -----------------------
     print("\nValidation (before calibration)")
     val_uncal = evaluate(best_model, X_val, y_val, "VAL-Uncalibrated")
 
     # -----------------------
-    # SIGMOID CALIBRATION
+    # CALIBRATION (SIGMOID)
     # -----------------------
-    print("\nApplying SIGMOID calibration (using VAL)...")
+    print("\nApplying SIGMOID calibration...")
     calibrated = CalibratedClassifierCV(
         best_model,
         method="sigmoid",
@@ -142,13 +175,19 @@ def main():
     print("\nFinal Test Evaluation")
     test_cal = evaluate(calibrated, X_test, y_test, "TEST-Calibrated")
 
-    # Save model
+    # -----------------------
+    # SAVE MODEL
+    # -----------------------
     dump(calibrated, OUTPUT_MODEL)
     print(f"\nModel saved to: {OUTPUT_MODEL}")
 
-    # Save summary
+    # -----------------------
+    # SAVE SUMMARY
+    # -----------------------
     summary = {
+        "algorithm": "RandomForestClassifier + Sigmoid Calibration",
         "features": FEATURES,
+        "target": TARGET,
         "split": {"train": 0.8, "val": 0.1, "test": 0.1},
         "best_params": rs.best_params_,
         "metrics": {
@@ -164,6 +203,8 @@ def main():
 
     print(f"Summary saved to: {SUMMARY_JSON}")
 
-
+# ======================================================
+# ENTRY POINT
+# ======================================================
 if __name__ == "__main__":
     main()
