@@ -32,13 +32,9 @@ FEATURES = [
     "ipk",
     "sks_lulus",
     "presensi",
-    "mengulang",
-    "semester_aktif",
-    "status_skripsi",
-    "status_administrasi",
-    "bekerja",
-    "cuti"
+    "mengulang"
 ]
+
 
 TARGET = "lulus_tepat_waktu"
 
